@@ -1,0 +1,21 @@
+{
+  "name": "pi-dcp",
+  "version": "0.1.0",
+  "description": "Dynamic Context Pruning for the pi coding agent. A port of opencode-dynamic-context-pruning.",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "keywords": ["pi", "pi-package", "pi-coding-agent", "context", "compression"],
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": { "optional": true },
+    "@earendil-works/pi-ai": { "optional": true },
+    "typebox": { "optional": true }
+  }
+}
