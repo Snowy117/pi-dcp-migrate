@@ -7,6 +7,7 @@ export interface CompressionBlock {
     runId: number;
     active: boolean;
     deactivatedByUser: boolean;
+    invalidated?: boolean;
     compressedTokens: number;
     summaryTokens: number;
     durationMs: number;

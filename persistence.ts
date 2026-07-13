@@ -123,6 +123,7 @@ function loadPruneMessages(
                 runId: Number.isInteger(block.runId) && block.runId > 0 ? block.runId : blockId,
                 active: block.active === true,
                 deactivatedByUser: block.deactivatedByUser === true,
+                invalidated: block.invalidated === true,
                 compressedTokens: typeof block.compressedTokens === "number" ? Math.max(0, block.compressedTokens) : 0,
                 summaryTokens: typeof block.summaryTokens === "number" ? Math.max(0, block.summaryTokens) : 0,
                 durationMs: typeof block.durationMs === "number" ? Math.max(0, block.durationMs) : 0,

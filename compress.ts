@@ -252,6 +252,55 @@ interface Selection {
     requiredBlockIds: number[];
 }
 
+function effectiveSelectionMessageIds(state: SessionState, selection: Selection): string[] {
+    const ids = new Set(selection.messageIds);
+    for (const blockId of selection.requiredBlockIds) {
+        const block = state.prune.messages.blocksById.get(blockId);
+        if (!block?.active) continue;
+        for (const id of block.effectiveMessageIds) ids.add(id);
+    }
+    return [...ids];
+}
+
+function validateCompleteToolTransactions(
+    search: SearchContext,
+    selectedMessageIds: Iterable<string>,
+): void {
+    const selected = new Set(selectedMessageIds);
+    const resultsByCallId = new Map<string, DcpMessage>();
+    for (const entry of search.messages) {
+        if (entry.message.role === "toolResult") resultsByCallId.set(entry.message.toolCallId, entry);
+    }
+
+    const issues: string[] = [];
+    for (const assistant of search.messages) {
+        if (!assistant.id || assistant.message.role !== "assistant") continue;
+        const assistantSelected = selected.has(assistant.id);
+        for (const block of assistant.message.content) {
+            if (block.type !== "toolCall") continue;
+            const result = resultsByCallId.get(block.id);
+            if (!result?.id) {
+                if (assistantSelected) {
+                    issues.push(`${assistant.ref ?? assistant.id} contains tool call ${block.id}, whose result is not available yet`);
+                }
+                continue;
+            }
+            const resultSelected = selected.has(result.id);
+            if (assistantSelected === resultSelected) continue;
+            issues.push(
+                `${assistant.ref ?? assistant.id} and ${result.ref ?? result.id} are the two sides of tool call ${block.id}`,
+            );
+        }
+    }
+
+    if (issues.length) {
+        throw new Error(
+            "Compression cannot split a tool call from its result. Expand or shrink the selected ranges so each tool transaction is included in full:\n" +
+            issues.map((issue) => `- ${issue}`).join("\n"),
+        );
+    }
+}
+
 function resolveSelection(ctx: SearchContext, start: BoundaryRef, end: BoundaryRef): Selection {
     const messageIds: string[] = [];
     const seen = new Set<string>();
@@ -519,6 +568,7 @@ function applyCompression(
         runId,
         active: true,
         deactivatedByUser: false,
+        invalidated: false,
         compressedTokens: 0,
         summaryTokens: countTokens(storedSummary),
         durationMs: 0,
@@ -605,6 +655,10 @@ function runRangeCompress(ctx: CompressContext, args: Static<typeof RangeSchema>
     });
 
     validateNonOverlapping(plans);
+    validateCompleteToolTransactions(
+        search,
+        plans.flatMap((plan) => effectiveSelectionMessageIds(ctx.state, plan.selection)),
+    );
 
     const runId = allocateRunId(ctx.state);
     let total = 0;
@@ -645,23 +699,29 @@ function runMessageCompress(ctx: CompressContext, args: Static<typeof MessageSch
     if (!Array.isArray(args.content) || !args.content.length) throw new Error("content is required");
 
     const search = buildSearchContext(ctx.state, messages);
-    const runId = allocateRunId(ctx.state);
-    let total = 0;
-    const blockIds: number[] = [];
-
-    for (let index = 0; index < args.content.length; index++) {
-        const entry = args.content[index]!;
+    const plans = args.content.map((entry, index) => {
         if (typeof entry.messageId !== "string" || !entry.messageId.trim()) throw new Error(`content[${index}].messageId is required`);
         if (typeof entry.summary !== "string" || !entry.summary.trim()) throw new Error(`content[${index}].summary is required`);
 
         const parsed = parseBoundaryId(entry.messageId.trim());
         if (!parsed || parsed.kind !== "message") throw new Error(`content[${index}].messageId must be a message ID (mNNNN)`);
         const start = resolveBoundary(search, ctx.state, parsed.ref);
-        const end: BoundaryRef = { ...start };
-        const selection = resolveSelection(search, start, end);
+        const selection = resolveSelection(search, start, { ...start });
         if (selection.messageIds.length !== 1) {
             throw new Error(`content[${index}] resolves to ${selection.messageIds.length} messages; message mode requires exactly one`);
         }
+        return { entry, selection, start };
+    });
+    validateCompleteToolTransactions(
+        search,
+        plans.flatMap((plan) => effectiveSelectionMessageIds(ctx.state, plan.selection)),
+    );
+
+    const runId = allocateRunId(ctx.state);
+    let total = 0;
+    const blockIds: number[] = [];
+
+    for (const { entry, selection, start } of plans) {
         const protectedOk = isProtectedUserMessage(ctx.config, search.byEntryId.get(selection.messageIds[0]!)!);
         if (protectedOk) continue;
 

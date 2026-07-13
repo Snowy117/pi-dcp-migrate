@@ -90,6 +90,9 @@ Rules:
 - Do not invent IDs. Use only IDs that are present in context.
 
 BATCHING
+TOOL CALL ATOMICITY
+Do not split a tool transaction. If a selected range contains an assistant message with one or more tool calls, it MUST also contain every corresponding tool result. If it contains a tool result, it MUST also contain the assistant message that made its call. Expand or shrink the range boundaries as necessary.
+
 When multiple independent ranges are ready and their boundaries do not overlap, include all of them as separate entries in the \`content\` array of a single tool call. Each entry should have its own \`startId\`, \`endId\`, and \`summary\`.
 `;
 
@@ -106,6 +109,9 @@ BOUNDARY IDS
 Pick \`messageId\` directly from injected IDs visible in context. Do not invent IDs.
 
 BATCHING
+TOOL CALL ATOMICITY
+Do not compress only one side of a tool transaction. If selecting an assistant message with tool calls or a tool result, include the assistant message and every corresponding tool result in the same batch.
+
 Include one or more messages as separate entries in the \`content\` array of a single tool call.
 `;
 

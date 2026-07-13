@@ -403,6 +403,12 @@ export function syncCompressionBlocks(state: SessionState, logger: Logger, messa
             }
             continue;
         }
+        if (block.invalidated) {
+            block.active = false;
+            if (block.deactivatedAt === undefined) block.deactivatedAt = now;
+            block.deactivatedByBlockId = undefined;
+            continue;
+        }
         if (block.deactivatedByUser) {
             block.active = false;
             if (block.deactivatedAt === undefined) block.deactivatedAt = now;
@@ -436,10 +442,60 @@ export function syncCompressionBlocks(state: SessionState, logger: Logger, messa
         entry.activeBlockIds = entry.allBlockIds.filter((id) => messagesState.activeBlockIds.has(id));
     }
 
+    invalidateSplitToolTransactions(state, messages, logger, now);
+
     let changed = false;
     for (const id of previousActive) if (!messagesState.activeBlockIds.has(id)) changed = true;
     for (const id of messagesState.activeBlockIds) if (!previousActive.has(id)) changed = true;
     if (changed) logger.debug("Synced compression block state", { active: messagesState.activeBlockIds.size });
+}
+
+function invalidateSplitToolTransactions(
+    state: SessionState,
+    messages: DcpMessage[],
+    logger: Logger,
+    now: number,
+): void {
+    const resultsByCallId = new Map<string, DcpMessage>();
+    for (const entry of messages) {
+        if (entry.message.role === "toolResult") resultsByCallId.set(entry.message.toolCallId, entry);
+    }
+
+    const invalidBlockIds = new Set<number>();
+    for (const assistant of messages) {
+        if (!assistant.id || assistant.message.role !== "assistant") continue;
+        const assistantBlocks = state.prune.messages.byMessageId.get(assistant.id)?.activeBlockIds ?? [];
+        const assistantCompacted = assistantBlocks.length > 0;
+        for (const block of assistant.message.content) {
+            if (block.type !== "toolCall") continue;
+            const result = resultsByCallId.get(block.id);
+            if (!result?.id) continue;
+            const resultBlocks = state.prune.messages.byMessageId.get(result.id)?.activeBlockIds ?? [];
+            const resultCompacted = resultBlocks.length > 0;
+            if (assistantCompacted === resultCompacted) continue;
+            for (const id of assistantBlocks) invalidBlockIds.add(id);
+            for (const id of resultBlocks) invalidBlockIds.add(id);
+        }
+    }
+    if (!invalidBlockIds.size) return;
+
+    for (const blockId of invalidBlockIds) {
+        const block = state.prune.messages.blocksById.get(blockId);
+        if (!block) continue;
+        block.invalidated = true;
+        block.active = false;
+        block.deactivatedAt = now;
+        block.deactivatedByBlockId = undefined;
+        state.prune.messages.activeBlockIds.delete(blockId);
+        if (state.prune.messages.activeByAnchorMessageId.get(block.anchorMessageId) === blockId) {
+            state.prune.messages.activeByAnchorMessageId.delete(block.anchorMessageId);
+        }
+    }
+    for (const entry of state.prune.messages.byMessageId.values()) {
+        entry.activeBlockIds = entry.allBlockIds.filter((id) => state.prune.messages.activeBlockIds.has(id));
+    }
+    logger.warn("Disabled compression blocks that split tool transactions", { blockIds: [...invalidBlockIds] });
+    void saveSessionStateQuiet(state, logger);
 }
 
 const PRUNED_TOOL_OUTPUT_REPLACEMENT =
