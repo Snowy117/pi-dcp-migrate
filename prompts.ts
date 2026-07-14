@@ -91,7 +91,7 @@ Rules:
 
 BATCHING
 TOOL CALL ATOMICITY
-Do not split a tool transaction. If a selected range contains an assistant message with one or more tool calls, it MUST also contain every corresponding tool result. If it contains a tool result, it MUST also contain the assistant message that made its call. Expand or shrink the range boundaries as necessary.
+Tool transactions are atomic. If a selected range contains only one side, the tool automatically expands it to include the assistant tool-call message and every corresponding tool result. With multiple tool calls in one assistant message, selecting any result includes that assistant message and all sibling results. Automatically expanded ranges that overlap are merged. The summary must faithfully cover transaction messages included by automatic expansion, even when they fall outside the submitted boundaries.
 
 When multiple independent ranges are ready and their boundaries do not overlap, include all of them as separate entries in the \`content\` array of a single tool call. Each entry should have its own \`startId\`, \`endId\`, and \`summary\`.
 `;
@@ -110,7 +110,7 @@ Pick \`messageId\` directly from injected IDs visible in context. Do not invent 
 
 BATCHING
 TOOL CALL ATOMICITY
-Do not compress only one side of a tool transaction. If selecting an assistant message with tool calls or a tool result, include the assistant message and every corresponding tool result in the same batch.
+Tool transactions are atomic. Selecting either an assistant tool-call message or a tool result automatically includes both sides, including all sibling results from the same assistant message. Automatic expansion uses the complete contiguous span between those messages. Write the summary so it faithfully covers every message in that expanded span, not only the submitted message.
 
 Include one or more messages as separate entries in the \`content\` array of a single tool call.
 `;
@@ -234,7 +234,7 @@ THE FORMAT OF COMPRESS
     {
       messageId: string,   // Raw message ID only: mNNNN
       topic: string,       // Short label (3-5 words) for this one message summary
-      summary: string      // Complete technical summary replacing that one message
+      summary: string      // Complete summary replacing that message and any automatically included transaction span
     }
   ]
 }

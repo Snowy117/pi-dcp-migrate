@@ -200,7 +200,7 @@ async function finalize(ctx: CompressContext, execCtx: ExtensionContext): Promis
     void execCtx;
 }
 
-interface BoundaryRef {
+export interface BoundaryRef {
     kind: "message" | "compressed-block";
     rawIndex: number;
     entryId?: string;
@@ -208,7 +208,7 @@ interface BoundaryRef {
     anchorMessageId?: string;
 }
 
-interface SearchContext {
+export interface SearchContext {
     messages: DcpMessage[];
     byEntryId: Map<string, DcpMessage>;
     summaryByBlockId: Map<number, CompressionBlock>;
@@ -243,7 +243,7 @@ function resolveBoundary(ctx: SearchContext, state: SessionState, id: string): B
     return { kind: "compressed-block", rawIndex: anchor.index, blockId: block.blockId, anchorMessageId: block.anchorMessageId };
 }
 
-interface Selection {
+export interface Selection {
     start: BoundaryRef;
     end: BoundaryRef;
     messageIds: string[];
@@ -267,10 +267,7 @@ function validateCompleteToolTransactions(
     selectedMessageIds: Iterable<string>,
 ): void {
     const selected = new Set(selectedMessageIds);
-    const resultsByCallId = new Map<string, DcpMessage>();
-    for (const entry of search.messages) {
-        if (entry.message.role === "toolResult") resultsByCallId.set(entry.message.toolCallId, entry);
-    }
+    const { assistantsByCallId, resultsByCallId } = buildToolTransactionIndex(search);
 
     const issues: string[] = [];
     for (const assistant of search.messages) {
@@ -278,26 +275,161 @@ function validateCompleteToolTransactions(
         const assistantSelected = selected.has(assistant.id);
         for (const block of assistant.message.content) {
             if (block.type !== "toolCall") continue;
-            const result = resultsByCallId.get(block.id);
-            if (!result?.id) {
+            const owners = assistantsByCallId.get(block.id) ?? [];
+            if (owners.length > 1 && (assistantSelected || owners.some((owner) => owner.id && selected.has(owner.id)))) {
+                issues.push(`tool call ${block.id} belongs to multiple assistant messages`);
+                continue;
+            }
+            const results = resultsByCallId.get(block.id) ?? [];
+            if (!results.length) {
                 if (assistantSelected) {
                     issues.push(`${assistant.ref ?? assistant.id} contains tool call ${block.id}, whose result is not available yet`);
                 }
                 continue;
             }
-            const resultSelected = selected.has(result.id);
-            if (assistantSelected === resultSelected) continue;
-            issues.push(
-                `${assistant.ref ?? assistant.id} and ${result.ref ?? result.id} are the two sides of tool call ${block.id}`,
-            );
+            for (const result of results) {
+                if (!result.id) continue;
+                const resultSelected = selected.has(result.id);
+                if (assistantSelected === resultSelected) continue;
+                issues.push(
+                    `${assistant.ref ?? assistant.id} and ${result.ref ?? result.id} are the two sides of tool call ${block.id}`,
+                );
+            }
+        }
+    }
+
+    for (const result of search.messages) {
+        if (!result.id || result.message.role !== "toolResult" || !selected.has(result.id)) continue;
+        if ((assistantsByCallId.get(result.message.toolCallId) ?? []).length === 0) {
+            issues.push(`${result.ref ?? result.id} is a result for tool call ${result.message.toolCallId}, whose assistant message is not available`);
         }
     }
 
     if (issues.length) {
         throw new Error(
-            "Compression cannot split a tool call from its result. Expand or shrink the selected ranges so each tool transaction is included in full:\n" +
+            "Compression could not include complete tool transactions automatically:\n" +
             issues.map((issue) => `- ${issue}`).join("\n"),
         );
+    }
+}
+
+interface ToolTransactionIndex {
+    assistantsByCallId: Map<string, DcpMessage[]>;
+    resultsByCallId: Map<string, DcpMessage[]>;
+}
+
+function buildToolTransactionIndex(search: SearchContext): ToolTransactionIndex {
+    const assistantsByCallId = new Map<string, DcpMessage[]>();
+    const resultsByCallId = new Map<string, DcpMessage[]>();
+    for (const entry of search.messages) {
+        if (entry.message.role === "assistant") {
+            for (const block of entry.message.content) {
+                if (block.type !== "toolCall") continue;
+                const assistants = assistantsByCallId.get(block.id);
+                if (assistants) assistants.push(entry);
+                else assistantsByCallId.set(block.id, [entry]);
+            }
+        } else if (entry.message.role === "toolResult") {
+            const results = resultsByCallId.get(entry.message.toolCallId);
+            if (results) results.push(entry);
+            else resultsByCallId.set(entry.message.toolCallId, [entry]);
+        }
+    }
+    return { assistantsByCallId, resultsByCallId };
+}
+
+function boundaryForMessage(entry: DcpMessage): BoundaryRef {
+    if (!entry.id) throw new Error("Failed to map tool transaction back to a session message");
+    return { kind: "message", rawIndex: entry.index, entryId: entry.id };
+}
+
+function includeMessageAndActiveBlockAnchors(
+    state: SessionState,
+    search: SearchContext,
+    entry: DcpMessage,
+    required: Set<DcpMessage>,
+): void {
+    if (!entry.id) {
+        required.add(entry);
+        return;
+    }
+    const activeBlockIds = state.prune.messages.byMessageId.get(entry.id)?.activeBlockIds ?? [];
+    let representedByActiveBlock = false;
+    for (const blockId of activeBlockIds) {
+        const block = state.prune.messages.blocksById.get(blockId);
+        if (!block?.active) continue;
+        const anchor = search.byEntryId.get(block.anchorMessageId);
+        if (!anchor) continue;
+        representedByActiveBlock = true;
+        required.add(anchor);
+    }
+    if (!representedByActiveBlock) required.add(entry);
+}
+
+export function expandToolTransactionSelection(
+    state: SessionState,
+    search: SearchContext,
+    initialStart: BoundaryRef,
+    initialEnd: BoundaryRef,
+): { start: BoundaryRef; end: BoundaryRef; selection: Selection } {
+    const index = buildToolTransactionIndex(search);
+    let start = initialStart;
+    let end = initialEnd;
+
+    while (true) {
+        const selection = resolveSelection(search, start, end);
+        const selectedIds = new Set(effectiveSelectionMessageIds(state, selection));
+        const required = new Set<DcpMessage>();
+
+        for (const messageId of selectedIds) {
+            const entry = search.byEntryId.get(messageId);
+            if (!entry) continue;
+
+            if (entry.message.role === "assistant") {
+                for (const block of entry.message.content) {
+                    if (block.type !== "toolCall") continue;
+                    const owners = index.assistantsByCallId.get(block.id) ?? [];
+                    if (owners.length > 1) throw new Error(`Tool call ${block.id} belongs to multiple assistant messages.`);
+                    const results = index.resultsByCallId.get(block.id) ?? [];
+                    if (!results.length) {
+                        throw new Error(
+                            `${entry.ref ?? entry.id} contains tool call ${block.id}, whose result is not available yet.`,
+                        );
+                    }
+                    for (const result of results) {
+                        if (result.id && selectedIds.has(result.id)) continue;
+                        includeMessageAndActiveBlockAnchors(state, search, result, required);
+                    }
+                }
+            } else if (entry.message.role === "toolResult") {
+                const assistants = index.assistantsByCallId.get(entry.message.toolCallId) ?? [];
+                if (!assistants.length) {
+                    throw new Error(
+                        `${entry.ref ?? entry.id} is a result for tool call ${entry.message.toolCallId}, whose assistant message is not available.`,
+                    );
+                }
+                if (assistants.length > 1) {
+                    throw new Error(`Tool call ${entry.message.toolCallId} belongs to multiple assistant messages.`);
+                }
+                const assistant = assistants[0]!;
+                if (!assistant.id || !selectedIds.has(assistant.id)) {
+                    includeMessageAndActiveBlockAnchors(state, search, assistant, required);
+                }
+            }
+        }
+
+        let nextStartIndex = start.rawIndex;
+        let nextEndIndex = end.rawIndex;
+        for (const entry of required) {
+            nextStartIndex = Math.min(nextStartIndex, entry.index);
+            nextEndIndex = Math.max(nextEndIndex, entry.index);
+        }
+        if (nextStartIndex === start.rawIndex && nextEndIndex === end.rawIndex) {
+            validateCompleteToolTransactions(search, effectiveSelectionMessageIds(state, selection));
+            return { start, end, selection };
+        }
+        if (nextStartIndex < start.rawIndex) start = boundaryForMessage(search.messages[nextStartIndex]!);
+        if (nextEndIndex > end.rawIndex) end = boundaryForMessage(search.messages[nextEndIndex]!);
     }
 }
 
@@ -371,6 +503,67 @@ function validateNonOverlapping(plans: Array<{ start: BoundaryRef; end: Boundary
         issues.push(`${prev.label} overlaps ${cur.label}. Overlapping ranges cannot be compressed in the same batch.`);
     }
     if (issues.length) throw new Error(issues.map((i) => `- ${i}`).join("\n"));
+}
+
+export interface RangePlanSource {
+    summary: string;
+    rawIndex: number;
+    inputIndex: number;
+    topic?: string;
+}
+
+export interface RangePlan {
+    selection: Selection;
+    anchor: string;
+    label: string;
+    start: BoundaryRef;
+    end: BoundaryRef;
+    sources: RangePlanSource[];
+}
+
+function expandRangePlan(state: SessionState, search: SearchContext, plan: RangePlan): RangePlan {
+    const expanded = expandToolTransactionSelection(state, search, plan.start, plan.end);
+    return {
+        ...plan,
+        ...expanded,
+        anchor: resolveAnchorMessageId(expanded.start),
+    };
+}
+
+export function mergeExpandedRangePlans(state: SessionState, search: SearchContext, initialPlans: RangePlan[]): RangePlan[] {
+    let plans = initialPlans.map((plan) => expandRangePlan(state, search, plan));
+    while (true) {
+        plans.sort((a, b) => a.start.rawIndex - b.start.rawIndex || a.end.rawIndex - b.end.rawIndex);
+        const merged: RangePlan[] = [];
+        let didMerge = false;
+        for (const plan of plans) {
+            const previous = merged[merged.length - 1];
+            if (!previous || plan.start.rawIndex > previous.end.rawIndex) {
+                merged.push(plan);
+                continue;
+            }
+            didMerge = true;
+            const start = previous.start.rawIndex <= plan.start.rawIndex ? previous.start : plan.start;
+            const end = previous.end.rawIndex >= plan.end.rawIndex ? previous.end : plan.end;
+            merged[merged.length - 1] = expandRangePlan(state, search, {
+                selection: previous.selection,
+                anchor: previous.anchor,
+                label: `${previous.label} + ${plan.label}`,
+                start,
+                end,
+                sources: [...previous.sources, ...plan.sources],
+            });
+        }
+        plans = merged;
+        if (!didMerge) return plans;
+    }
+}
+
+function combinedRangeSummary(plan: RangePlan): string {
+    return [...plan.sources]
+        .sort((a, b) => a.rawIndex - b.rawIndex || a.inputIndex - b.inputIndex)
+        .map((source) => source.summary)
+        .join("\n\n");
 }
 
 const BLOCK_PLACEHOLDER_REGEX = /\(b(\d+)\)|\{block_(\d+)\}/gi;
@@ -638,12 +831,12 @@ function applyCompression(
     return selection.messageIds.length;
 }
 
-function runRangeCompress(ctx: CompressContext, args: Static<typeof RangeSchema>, messages: DcpMessage[], toolCallId: string, notify: NotifyFn): string {
+export function runRangeCompress(ctx: CompressContext, args: Static<typeof RangeSchema>, messages: DcpMessage[], toolCallId: string, notify: NotifyFn): string {
     if (typeof args.topic !== "string" || !args.topic.trim()) throw new Error("topic is required and must be a non-empty string");
     if (!Array.isArray(args.content) || !args.content.length) throw new Error("content is required and must be a non-empty array");
 
     const search = buildSearchContext(ctx.state, messages);
-    const plans = args.content.map((entry, index) => {
+    const requestedPlans = args.content.map((entry, index): RangePlan => {
         if (typeof entry.startId !== "string" || !entry.startId.trim()) throw new Error(`content[${index}].startId is required`);
         if (typeof entry.endId !== "string" || !entry.endId.trim()) throw new Error(`content[${index}].endId is required`);
         if (typeof entry.summary !== "string" || !entry.summary.trim()) throw new Error(`content[${index}].summary is required`);
@@ -651,21 +844,28 @@ function runRangeCompress(ctx: CompressContext, args: Static<typeof RangeSchema>
         const end = resolveBoundary(search, ctx.state, entry.endId.trim());
         if (start.rawIndex > end.rawIndex) throw new Error(`startId appears after endId in content[${index}]`);
         const selection = resolveSelection(search, start, end);
-        return { entry, selection, anchor: resolveAnchorMessageId(start), label: `${entry.startId}..${entry.endId}`, start, end };
+        return {
+            selection,
+            anchor: resolveAnchorMessageId(start),
+            label: `${entry.startId}..${entry.endId}`,
+            start,
+            end,
+            sources: [{ summary: entry.summary, rawIndex: start.rawIndex, inputIndex: index }],
+        };
     });
 
-    validateNonOverlapping(plans);
-    validateCompleteToolTransactions(
-        search,
-        plans.flatMap((plan) => effectiveSelectionMessageIds(ctx.state, plan.selection)),
-    );
+    validateNonOverlapping(requestedPlans);
+    const plans = mergeExpandedRangePlans(ctx.state, search, requestedPlans);
+    for (const plan of plans) {
+        validateCompleteToolTransactions(search, effectiveSelectionMessageIds(ctx.state, plan.selection));
+    }
 
     const runId = allocateRunId(ctx.state);
     let total = 0;
     const blockIds: number[] = [];
     for (const plan of plans) {
         const { expanded, consumed } = injectBlockPlaceholders(
-            plan.entry.summary,
+            combinedRangeSummary(plan),
             plan.selection.requiredBlockIds,
             plan.start,
             plan.end,
@@ -694,12 +894,12 @@ function runRangeCompress(ctx: CompressContext, args: Static<typeof RangeSchema>
     return `Compressed ${total} messages into ${blockIds.length} ${blockIds.length === 1 ? "block" : "blocks"} (${blockIds.map((b) => `b${b}`).join(", ")}).`;
 }
 
-function runMessageCompress(ctx: CompressContext, args: Static<typeof MessageSchema>, messages: DcpMessage[], toolCallId: string, notify: NotifyFn): string {
+export function runMessageCompress(ctx: CompressContext, args: Static<typeof MessageSchema>, messages: DcpMessage[], toolCallId: string, notify: NotifyFn): string {
     if (typeof args.topic !== "string" || !args.topic.trim()) throw new Error("topic is required");
     if (!Array.isArray(args.content) || !args.content.length) throw new Error("content is required");
 
     const search = buildSearchContext(ctx.state, messages);
-    const plans = args.content.map((entry, index) => {
+    const requestedPlans = args.content.map((entry, index): RangePlan | null => {
         if (typeof entry.messageId !== "string" || !entry.messageId.trim()) throw new Error(`content[${index}].messageId is required`);
         if (typeof entry.summary !== "string" || !entry.summary.trim()) throw new Error(`content[${index}].summary is required`);
 
@@ -710,35 +910,60 @@ function runMessageCompress(ctx: CompressContext, args: Static<typeof MessageSch
         if (selection.messageIds.length !== 1) {
             throw new Error(`content[${index}] resolves to ${selection.messageIds.length} messages; message mode requires exactly one`);
         }
-        return { entry, selection, start };
-    });
-    validateCompleteToolTransactions(
-        search,
-        plans.flatMap((plan) => effectiveSelectionMessageIds(ctx.state, plan.selection)),
-    );
+        const selected = search.byEntryId.get(selection.messageIds[0]!)!;
+        if (isProtectedUserMessage(ctx.config, selected)) return null;
+        return {
+            selection,
+            anchor: resolveAnchorMessageId(start),
+            label: entry.messageId,
+            start,
+            end: { ...start },
+            sources: [{
+                summary: entry.summary,
+                rawIndex: start.rawIndex,
+                inputIndex: index,
+                topic: entry.topic || args.topic,
+            }],
+        };
+    }).filter((plan): plan is RangePlan => plan !== null);
+
+    if (!requestedPlans.length) {
+        notifyCompression(ctx, notify, args.topic, [], 0);
+        return "No messages were compressible (they may be protected).";
+    }
+
+    validateNonOverlapping(requestedPlans);
+    const plans = mergeExpandedRangePlans(ctx.state, search, requestedPlans);
+    for (const plan of plans) {
+        validateCompleteToolTransactions(search, effectiveSelectionMessageIds(ctx.state, plan.selection));
+    }
 
     const runId = allocateRunId(ctx.state);
     let total = 0;
     const blockIds: number[] = [];
 
-    for (const { entry, selection, start } of plans) {
-        const protectedOk = isProtectedUserMessage(ctx.config, search.byEntryId.get(selection.messageIds[0]!)!);
-        if (protectedOk) continue;
-
-        const withProtected = appendProtectedContent(ctx, selection, search, entry.summary);
+    for (const plan of plans) {
+        const { expanded, consumed } = injectBlockPlaceholders(
+            combinedRangeSummary(plan),
+            plan.selection.requiredBlockIds,
+            plan.start,
+            plan.end,
+            search.summaryByBlockId,
+        );
+        const withProtected = appendProtectedContent(ctx, plan.selection, search, expanded);
         const blockId = allocateBlockId(ctx.state);
         const stored = wrapSummary(blockId, withProtected);
         const count = applyCompression(
             ctx.state,
             runId,
-            entry.topic || args.topic,
-            selection,
-            resolveAnchorMessageId(start),
+            plan.sources.length === 1 ? plan.sources[0]!.topic || args.topic : args.topic,
+            plan.selection,
+            plan.anchor,
             messages[messages.length - 1]?.id ?? "",
             toolCallId,
             blockId,
             stored,
-            [],
+            consumed,
         );
         total += count;
         blockIds.push(blockId);
