@@ -89,7 +89,7 @@ export function registerCompressTool(ctx: CompressContext): void {
         async execute(toolCallId, params, _signal, _onUpdate, execCtx) {
             if (ctx.state.manualMode && ctx.state.manualMode !== "compress-pending") {
                 throw new Error(
-                    "Manual mode: compress blocked. Do not retry until `<compress triggered manually>` appears in user context.",
+                    "Manual mode: compress blocked. Do not retry until `(dcp-compress-triggered-manually)` appears in user context.",
                 );
             }
 
@@ -633,7 +633,9 @@ function restoreSummary(summary: string): string {
     const headerMatch = summary.match(/^\s*\[Compressed conversation(?: section)?(?: b\d+)?\]/i);
     if (!headerMatch) return summary;
     const after = summary.slice(headerMatch[0].length).replace(/^(?:\r?\n)+/, "");
-    return after.replace(/(?:\r?\n)*<dcp-message-id>b\d+<\/dcp-message-id>\s*$/i, "").replace(/(?:\r?\n)+$/, "");
+    return after
+        .replace(/(?:\r?\n)*(?:\(dcp-msg-id\s+b\d+\)|<dcp-message-id>b\d+<\/dcp-message-id>)\s*$/i, "")
+        .replace(/(?:\r?\n)+$/, "");
 }
 
 function wrapSummary(blockId: number, summary: string): string {

@@ -20,6 +20,14 @@ import {
     resetOnCompaction,
 } from "./messages.ts";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import {
+    buildProtectedToolsExtension,
+    CONTEXT_LIMIT_NUDGE,
+    ITERATION_NUDGE,
+    MANUAL_MODE_SYSTEM_EXTENSION,
+    SYSTEM_PROMPT,
+    TURN_NUDGE,
+} from "./prompts.ts";
 
 function mkUser(text: string, id: string): AgentMessage {
     return { role: "user", content: text, timestamp: Date.now() + Math.random() };
@@ -102,19 +110,37 @@ console.log("tc3 (unique) output:", JSON.stringify(tc3Result?.message.role === "
 injectMessageIdTags(state, config, pruned);
 console.log("\n=== Message ID tags ===");
 const u1 = pruned.find(m => m.id === "e0");
-console.log("u1 has tag:", u1?.message.role === "user" && typeof u1.message.content === "string" && u1.message.content.includes("<dcp-message-id>m0001</dcp-message-id>"));
+const hasMessageMarker = u1?.message.role === "user" &&
+    typeof u1.message.content === "string" &&
+    u1.message.content.includes("(dcp-msg-id m0001)");
+console.log("u1 has marker:", hasMessageMarker);
+if (!hasMessageMarker) throw new Error("Message ID was not injected with the parenthesized format");
 
 // When: context exceeds the max limit
 state.stats = { pruneTokenCounter: 0, totalPruneTokens: 0 };
 const overLimitConfig = { ...config, compress: { ...config.compress, maxContextLimit: 10, minContextLimit: 5 } };
 injectCompressNudges(state, overLimitConfig, logger, pruned, {
-    system: "", contextLimitNudge: "<dcp-system-reminder>COMPRESS NOW</dcp-system-reminder>",
+    system: "", contextLimitNudge: "(dcp-system-reminder\nCOMPRESS NOW\n)",
     turnNudge: "", iterationNudge: "",
 });
 console.log("\n=== Nudge injection ===");
 const lastMsg = pruned[pruned.length - 1];
 const lastText = lastMsg?.message.role === "assistant" ? lastMsg.message.content.find(c => c.type === "text") : null;
-console.log("last assistant has nudge:", lastText?.type === "text" && lastText.text.includes("COMPRESS NOW"));
+const hasNudge = lastText?.type === "text" && /\(dcp-system-reminder\nCOMPRESS NOW[\s\S]*\n\)/.test(lastText.text);
+console.log("last assistant has nudge:", hasNudge);
+if (!hasNudge) throw new Error("Context nudge was not injected with the parenthesized format");
+
+const bundledInjections = [
+    SYSTEM_PROMPT,
+    CONTEXT_LIMIT_NUDGE,
+    TURN_NUDGE,
+    ITERATION_NUDGE,
+    MANUAL_MODE_SYSTEM_EXTENSION,
+    buildProtectedToolsExtension(["subagent"]),
+];
+if (bundledInjections.some(text => /<\/?dcp[\s>]/i.test(text))) {
+    throw new Error("Bundled injection prompts must not contain XML-style DCP tags");
+}
 
 // Then: boundary IDs parse correctly
 console.log("\n=== Boundary parsing ===");

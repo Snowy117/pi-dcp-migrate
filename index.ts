@@ -133,8 +133,8 @@ function triggerManualCompress(runtime: DcpRuntime, pi: ExtensionAPI, focus: str
     }
     state.manualMode = "compress-pending";
     const body = focus
-        ? `[Manual compression requested: ${focus}]\n<compress triggered manually>`
-        : "[Manual compression requested]\n<compress triggered manually>";
+        ? `[Manual compression requested: ${focus}]\n(dcp-compress-triggered-manually)`
+        : "[Manual compression requested]\n(dcp-compress-triggered-manually)";
     pi.sendUserMessage(body);
 }
 
@@ -243,7 +243,7 @@ function applyManualTrigger(runtime: DcpRuntime, messages: DcpMessage[]): void {
     for (let i = messages.length - 1; i >= 0; i--) {
         const msg = messages[i]!;
         if (msg.message.role !== "user" || isIgnoredUserMessage(msg)) continue;
-        appendToUser(msg.message, "\n\n<compress triggered manually>");
+        appendToUser(msg.message, "\n\n(dcp-compress-triggered-manually)");
         break;
     }
 }

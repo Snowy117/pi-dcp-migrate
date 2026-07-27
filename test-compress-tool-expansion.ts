@@ -209,7 +209,7 @@ function makeCompressContext(mode: "range" | "message", messages: DcpMessage[]) 
         effectiveMessageIds: [messages[0]!.id!, messages[1]!.id!, messages[2]!.id!],
         effectiveToolIds: ["archived"],
         createdAt: 1,
-        summary: "[Compressed conversation section]\narchived\n<dcp-message-id>b1</dcp-message-id>",
+        summary: "[Compressed conversation section]\narchived\n(dcp-msg-id b1)",
     };
     state.prune.messages.blocksById.set(1, block);
     state.prune.messages.activeBlockIds.add(1);

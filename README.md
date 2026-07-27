@@ -10,7 +10,7 @@ A port of [opencode-dynamic-context-pruning](https://github.com/Opencode-DCP/ope
 - **Deduplication** — prunes older tool calls that have the same name + arguments, keeping only the most recent.
 - **Purge errors** — prunes inputs from errored tool calls after a configurable number of turns (error messages preserved).
 - **Nudges** — injects reminders to compress when context crosses soft `minContextLimit` / `maxContextLimit` thresholds, with configurable frequency and force.
-- **Message IDs** — injects stable `<dcp-message-id>mNNNN</dcp-message-id>` tags so the model can reference boundaries when calling `compress`.
+- **Message IDs** — injects stable `(dcp-msg-id mNNNN)` markers so the model can reference boundaries when calling `compress`.
 - **State persistence** — pruning/compression state survives restarts, keyed by session file.
 
 Your session history on disk is **never modified** — DCP only transforms the message array sent to the LLM.

@@ -48,7 +48,7 @@ state.prune.messages.nextBlockId = blockId + 1;
 const runId = state.prune.messages.nextRunId;
 state.prune.messages.nextRunId = runId + 1;
 const anchorMessageId = startEntry.id!;
-const summary = `[Compressed conversation section]\nAuth exploration: found JWT with RS256.\n\n<dcp-message-id>${formatBlockRef(blockId)}</dcp-message-id>`;
+const summary = `[Compressed conversation section]\nAuth exploration: found JWT with RS256.\n\n(dcp-msg-id ${formatBlockRef(blockId)})`;
 
 state.prune.messages.blocksById.set(blockId, {
     blockId, runId, active: true, deactivatedByUser: false,

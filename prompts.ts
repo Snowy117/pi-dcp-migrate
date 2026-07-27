@@ -8,7 +8,7 @@ You operate in a context-constrained environment. Manage context continuously to
 
 The ONLY tool you have for context management is \`compress\`. It replaces older conversation content with technical summaries you produce.
 
-\`<dcp-message-id>\` and \`<dcp-system-reminder>\` tags are environment-injected metadata. Do not output them.
+\`(dcp-msg-id ...)\` and \`(dcp-system-reminder ...)\` markers are environment-injected metadata. Do not output them.
 
 THE PHILOSOPHY OF COMPRESS
 \`compress\` transforms conversation content into dense, high-fidelity summaries. This is not cleanup - it is crystallization. Your summary becomes the authoritative record of what transpired.
@@ -54,7 +54,7 @@ Compressed block sections in context are clearly marked with a header:
 
 - \`[Compressed conversation section]\`
 
-Compressed block IDs always use the \`bN\` form (never \`mNNNN\`) and are represented in the same XML metadata tag format.
+Compressed block IDs always use the \`bN\` form (never \`mNNNN\`) and are represented with the same parenthesized metadata marker.
 
 Rules:
 - Include every required block placeholder exactly once.
@@ -79,9 +79,9 @@ You specify boundaries by ID using the injected IDs visible in the conversation:
 - \`mNNNN\` IDs identify raw messages
 - \`bN\` IDs identify previously compressed blocks
 
-Each message has an ID inside XML metadata tags like \`<dcp-message-id>...</dcp-message-id>\`.
-The same ID tag appears on every message it belongs to — each unique ID identifies one complete message (a user turn, an assistant turn, or a tool result).
-Treat these tags as boundary metadata only, not as message content.
+Each message has an ID inside a parenthesized metadata marker like \`(dcp-msg-id m0001)\`.
+The same ID marker appears on every message it belongs to — each unique ID identifies one complete message (a user turn, an assistant turn, or a tool result).
+Treat these markers as boundary metadata only, not as message content.
 
 Rules:
 - Pick \`startId\` and \`endId\` directly from injected IDs in context.
@@ -105,7 +105,7 @@ USER INTENT FIDELITY
 Preserve the user's intent with extra care. Directly quote short user messages when they best preserve exact meaning.
 
 BOUNDARY IDS
-\`mNNNN\` IDs identify raw messages (ignore any priority attributes on the metadata tag).
+\`mNNNN\` IDs identify raw messages.
 Pick \`messageId\` directly from injected IDs visible in context. Do not invent IDs.
 
 BATCHING
@@ -115,7 +115,7 @@ Tool transactions are atomic. Selecting either an assistant tool-call message or
 Include one or more messages as separate entries in the \`content\` array of a single tool call.
 `;
 
-export const CONTEXT_LIMIT_NUDGE = `<dcp-system-reminder>
+export const CONTEXT_LIMIT_NUDGE = `(dcp-system-reminder
 CRITICAL WARNING: MAX CONTEXT LIMIT REACHED
 
 You are at or beyond the configured max context threshold. This is an emergency context-recovery moment.
@@ -131,10 +131,10 @@ Avoid the newest active working messages unless it is clearly closed.
 SUMMARY REQUIREMENTS
 Your summary MUST cover all essential details from the selected messages so work can continue.
 If the compressed range includes user messages, preserve user intent exactly. Prefer direct quotes for short user messages to avoid semantic drift.
-</dcp-system-reminder>
+)
 `;
 
-export const TURN_NUDGE = `<dcp-system-reminder>
+export const TURN_NUDGE = `(dcp-system-reminder
 Evaluate the conversation for compressible ranges.
 
 If any messages are cleanly closed and unlikely to be needed again, use the compress tool on them.
@@ -142,35 +142,35 @@ If direction has shifted, compress earlier ranges that are now less relevant.
 
 The goal is to filter noise and distill key information so context accumulation stays under control.
 Keep active context uncompressed.
-</dcp-system-reminder>
+)
 `;
 
-export const ITERATION_NUDGE = `<dcp-system-reminder>
+export const ITERATION_NUDGE = `(dcp-system-reminder
 You've been iterating for a while after the last user message.
 
 If there is a closed portion that is unlikely to be referenced immediately (for example, finished research before implementation), use the compress tool on it now.
-</dcp-system-reminder>
+)
 `;
 
-export const MANUAL_MODE_SYSTEM_EXTENSION = `<dcp-system-reminder>
+export const MANUAL_MODE_SYSTEM_EXTENSION = `(dcp-system-reminder
 Manual mode is enabled. Do NOT use compress unless the user has explicitly triggered it through a manual marker.
 
-Only use the compress tool after seeing \`<compress triggered manually>\` in the current user instruction context.
+Only use the compress tool after seeing \`(dcp-compress-triggered-manually)\` in the current user instruction context.
 
 Issue exactly ONE compress tool per manual trigger. Do NOT launch multiple compress tools in parallel. Each trigger grants a single compression; after it completes, wait for the next trigger.
 
 After completing a manually triggered context-management action, STOP IMMEDIATELY. Do NOT continue with any task execution. End your response right after the tool use completes and wait for the next user input.
-</dcp-system-reminder>
+)
 `;
 
 export function buildProtectedToolsExtension(protectedTools: string[]): string {
     if (!protectedTools.length) return "";
     const toolList = protectedTools.map((t) => `\`${t}\``).join(", ");
-    return `<dcp-system-reminder>
+    return `(dcp-system-reminder
 The following tools are environment-managed: ${toolList}.
 Their outputs are automatically preserved during compression.
 Do not include their content in compress tool summaries — the environment retains it independently.
-</dcp-system-reminder>`;
+)`;
 }
 
 export interface RuntimePrompts {

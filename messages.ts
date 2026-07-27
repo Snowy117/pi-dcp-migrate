@@ -59,7 +59,7 @@ export function parseBoundaryId(id: string): ParsedBoundaryId | null {
 }
 
 export function formatMessageIdTag(ref: string): string {
-    return `\n<dcp-message-id>${ref}</dcp-message-id>`;
+    return `\n(dcp-msg-id ${ref})`;
 }
 
 /** Correlate pi context messages with stable session entry IDs. */
@@ -591,6 +591,9 @@ export function stripHallucinations(text: string): string {
     return text
         .replace(/<dcp[^>]*>[\s\S]*?<\/dcp[^>]*>/gi, "")
         .replace(/<\/?dcp[^>]*>/gi, "")
+        .replace(/\(dcp-system-reminder\b[\s\S]*?\n\)/gi, "")
+        .replace(/\(dcp-msg-id\s+[^)\r\n]+\)/gi, "")
+        .replace(/\(dcp-compress-triggered-manually\)/gi, "")
         .trim();
 }
 
@@ -678,10 +681,16 @@ function isContextOverLimits(state: SessionState, config: PluginConfig, provider
 
 function appendGuidanceToTag(nudge: string, guidance: string): string {
     if (!guidance.trim()) return nudge;
-    const closeTag = "</dcp-system-reminder>";
-    const idx = nudge.lastIndexOf(closeTag);
-    if (idx === -1) return nudge;
-    return `${nudge.slice(0, idx).trimEnd()}\n\n${guidance}\n${nudge.slice(idx)}`;
+    const legacyCloseTag = "</dcp-system-reminder>";
+    const legacyIdx = nudge.lastIndexOf(legacyCloseTag);
+    if (legacyIdx !== -1) {
+        return `${nudge.slice(0, legacyIdx).trimEnd()}\n\n${guidance}\n${nudge.slice(legacyIdx)}`;
+    }
+
+    const trimmed = nudge.trimEnd();
+    if (!trimmed.startsWith("(dcp-system-reminder") || !trimmed.endsWith(")")) return nudge;
+    const idx = trimmed.length - 1;
+    return `${trimmed.slice(0, idx).trimEnd()}\n\n${guidance}\n)${nudge.slice(trimmed.length)}`;
 }
 
 function buildCompressedBlockGuidance(state: SessionState): string {
