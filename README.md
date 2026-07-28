@@ -11,7 +11,7 @@ A port of [opencode-dynamic-context-pruning](https://github.com/Opencode-DCP/ope
 - **Purge errors** — prunes inputs from errored tool calls after a configurable number of turns (error messages preserved).
 - **Nudges** — injects reminders to compress when context crosses soft `minContextLimit` / `maxContextLimit` thresholds, with configurable frequency and force.
 - **Message IDs** — injects stable `(dcp-msg-id mNNNN)` markers so the model can reference boundaries when calling `compress`.
-- **State persistence** — pruning/compression state survives restarts, keyed by session file.
+- **State persistence** — pruning/compression state survives restarts, keyed by session file, and is inherited by forked/cloned sessions.
 
 Your session history on disk is **never modified** — DCP only transforms the message array sent to the LLM.
 
@@ -125,6 +125,14 @@ Default protected tools (never pruned by dedup/purge): `subagent`, `compress`, `
 ## pi-subagents compatibility
 
 Works alongside [pi-subagents](https://github.com/Snowy117/pi-subagents). Each subagent runs in its own process with its own DCP instance. The parent session's `subagent` tool results are protected from compression by default (`compress.protectedTools` includes `subagent`).
+
+## How fork and clone interact
+
+`/fork`, `/clone`, and `pi --fork` copy session entries into a new session file, keeping their entry IDs. Since DCP keys its state by entry ID, the new session inherits the parent's compression blocks:
+
+- On `session_start`, if the new session has no DCP state of its own, DCP walks the `parentSession` chain in the session headers and adopts the first ancestor state it finds.
+- Inherited blocks are filtered against the entries the new session actually contains, so blocks whose origin or anchor was cut off by the fork point are dropped.
+- The result is saved under the new session's own key. The parent's state file is never modified.
 
 ## How tree navigation interacts
 

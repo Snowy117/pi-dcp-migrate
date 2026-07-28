@@ -97,7 +97,7 @@ export default function (pi: ExtensionAPI): void {
             resetSessionState(state);
             state.sessionKey = key;
             state.manualMode = config.manualMode.enabled ? "active" : false;
-            await loadStateForSession(state, key, logger);
+            await loadStateForSession(state, ctx, logger);
             if (config.manualMode.enabled && !state.manualMode) state.manualMode = "active";
         }
         if (ctx.model?.contextWindow) state.modelContextLimit = ctx.model.contextWindow;

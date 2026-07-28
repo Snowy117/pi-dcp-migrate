@@ -23,6 +23,86 @@ function sessionFilePath(sessionKey: string): string {
     return join(STORAGE_DIR, `${sessionKey}.json`);
 }
 
+export function sessionKeyFromSessionFile(sessionFile: string): string {
+    return sessionFile.split(/[\\/]/).pop()!.replace(/\.jsonl$/, "");
+}
+
+async function readParentSessionFile(sessionFile: string): Promise<string | null> {
+    try {
+        if (!existsSync(sessionFile)) return null;
+        const content = await readFile(sessionFile, "utf-8");
+        const firstLine = content.slice(0, content.indexOf("\n") === -1 ? undefined : content.indexOf("\n"));
+        if (!firstLine.trim()) return null;
+        const header = JSON.parse(firstLine);
+        if (header?.type !== "session") return null;
+        return typeof header.parentSession === "string" && header.parentSession ? header.parentSession : null;
+    } catch {
+        return null;
+    }
+}
+
+const MAX_ANCESTOR_DEPTH = 32;
+
+/**
+ * Walk the `parentSession` chain starting at `sessionFile` and return the first
+ * ancestor that has persisted DCP state. Used so a forked/cloned session
+ * inherits the parent's compression blocks.
+ */
+export async function loadAncestorSessionState(
+    sessionFile: string,
+    logger: Logger,
+): Promise<{ sessionKey: string; persisted: PersistedState } | null> {
+    let current: string | null = sessionFile;
+    const seen = new Set<string>();
+    for (let depth = 0; current && depth < MAX_ANCESTOR_DEPTH; depth++) {
+        if (seen.has(current)) break;
+        seen.add(current);
+        const key = sessionKeyFromSessionFile(current);
+        const persisted = await loadSessionState(key, logger);
+        if (persisted) return { sessionKey: key, persisted };
+        current = await readParentSessionFile(current);
+    }
+    return null;
+}
+
+/**
+ * Drop inherited state that references entries the current session does not have.
+ * Fork keeps entry IDs, so surviving entries stay addressable; truncated ones must go.
+ */
+export function restrictStateToEntries(state: SessionState, presentEntryIds: Set<string>): void {
+    const messages = state.prune.messages;
+
+    for (const [messageId] of [...messages.byMessageId]) {
+        if (!presentEntryIds.has(messageId)) messages.byMessageId.delete(messageId);
+    }
+
+    for (const [blockId, block] of [...messages.blocksById]) {
+        const originPresent = !!block.compressMessageId && presentEntryIds.has(block.compressMessageId);
+        const anchorPresent = !!block.anchorMessageId && presentEntryIds.has(block.anchorMessageId);
+        if (originPresent && anchorPresent) continue;
+        messages.blocksById.delete(blockId);
+        messages.activeBlockIds.delete(blockId);
+        if (messages.activeByAnchorMessageId.get(block.anchorMessageId) === blockId) {
+            messages.activeByAnchorMessageId.delete(block.anchorMessageId);
+        }
+    }
+
+    for (const [anchor, blockId] of [...messages.activeByAnchorMessageId]) {
+        if (!messages.blocksById.has(blockId) || !presentEntryIds.has(anchor)) {
+            messages.activeByAnchorMessageId.delete(anchor);
+        }
+    }
+
+    for (const entry of messages.byMessageId.values()) {
+        entry.allBlockIds = entry.allBlockIds.filter((id) => messages.blocksById.has(id));
+        entry.activeBlockIds = entry.activeBlockIds.filter((id) => messages.activeBlockIds.has(id));
+    }
+
+    for (const [messageId, entry] of [...messages.byMessageId]) {
+        if (!entry.allBlockIds.length) messages.byMessageId.delete(messageId);
+    }
+}
+
 interface PersistedPruneMessages {
     byMessageId: Record<string, PrunedMessageEntry>;
     blocksById: Record<string, CompressionBlock>;
@@ -32,7 +112,7 @@ interface PersistedPruneMessages {
     nextRunId: number;
 }
 
-interface PersistedState {
+export interface PersistedState {
     manualMode?: boolean;
     prune: {
         tools?: Record<string, number>;
@@ -188,6 +268,48 @@ export async function loadSessionState(
         logger.warn("Failed to load DCP state", { sessionKey, error: error?.message });
         return null;
     }
+}
+
+export interface SessionIdentity {
+    sessionKey: string;
+    sessionFile: string | null | undefined;
+    presentEntryIds: () => Set<string>;
+}
+
+/**
+ * Load state for the active session, falling back to the nearest ancestor session
+ * (`parentSession` chain) when the session has none of its own. Inherited state is
+ * restricted to entries the active session still carries, then saved under its own key.
+ */
+export async function loadOrInheritSessionState(
+    state: SessionState,
+    identity: SessionIdentity,
+    logger: Logger,
+): Promise<void> {
+    state.sessionKey = identity.sessionKey;
+
+    const own = await loadSessionState(identity.sessionKey, logger);
+    if (own) {
+        await applyPersistedState(state, own, logger);
+        return;
+    }
+
+    if (!identity.sessionFile) return;
+    const inherited = await loadAncestorSessionState(identity.sessionFile, logger);
+    if (!inherited) return;
+
+    await applyPersistedState(state, inherited.persisted, logger);
+    state.sessionKey = identity.sessionKey;
+    restrictStateToEntries(state, identity.presentEntryIds());
+
+    logger.info("Inherited DCP state from ancestor session", {
+        from: inherited.sessionKey,
+        to: identity.sessionKey,
+        blocks: state.prune.messages.blocksById.size,
+        activeBlocks: state.prune.messages.activeBlockIds.size,
+    });
+
+    await saveSessionState(state, logger);
 }
 
 export async function applyPersistedState(

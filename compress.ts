@@ -1001,10 +1001,20 @@ export function sessionKeyFor(ctx: ExtensionContext): string {
     return ctx.sessionManager.getSessionId() ?? "inmemory";
 }
 
-export async function loadStateForSession(state: SessionState, sessionKey: string, logger: Logger): Promise<void> {
-    state.sessionKey = sessionKey;
-    const { loadSessionState } = await import("./persistence.ts");
-    const persisted = await loadSessionState(sessionKey, logger);
-    if (persisted) await applyPersistedState(state, persisted, logger);
+export async function loadStateForSession(
+    state: SessionState,
+    ctx: ExtensionContext,
+    logger: Logger,
+): Promise<void> {
+    const { loadOrInheritSessionState } = await import("./persistence.ts");
+    await loadOrInheritSessionState(
+        state,
+        {
+            sessionKey: sessionKeyFor(ctx),
+            sessionFile: ctx.sessionManager.getSessionFile(),
+            presentEntryIds: () => new Set(ctx.sessionManager.getEntries().map((entry) => entry.id)),
+        },
+        logger,
+    );
 }
 
