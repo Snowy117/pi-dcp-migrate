@@ -17,18 +17,22 @@ Your session history on disk is **never modified** — DCP only transforms the m
 
 ## Installation
 
-### As a pi package (recommended)
+### npm (recommended)
 
 ```bash
-pi install git:github.com/<you>/pi-dcp
+pi install npm:@snowy117/pi-dcp
+```
+
+### git
+
+```bash
+pi install git:github.com/Snowy117/pi-dcp-migrate
 ```
 
 ### Manual (global extension)
 
 ```bash
-git clone <this repo> ~/.pi/agent/extensions/pi-dcp
-# or symlink:
-ln -s /path/to/pi-dcp ~/.pi/agent/extensions/pi-dcp
+git clone https://github.com/Snowy117/pi-dcp-migrate ~/.pi/agent/extensions/pi-dcp
 ```
 
 Pi auto-discovers extensions in `~/.pi/agent/extensions/`. Use `/reload` after editing.

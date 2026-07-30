@@ -236,7 +236,7 @@ function createDefaultConfig(): void {
     }
     if (existsSync(GLOBAL_CONFIG_PATH_JSONC) || existsSync(GLOBAL_CONFIG_PATH_JSON)) return;
     const configContent = `{
-  "$schema": "https://raw.githubusercontent.com/earendil-works/pi-dcp/master/dcp.schema.json"
+  "$schema": "https://raw.githubusercontent.com/Snowy117/pi-dcp-migrate/master/dcp.schema.json"
 }
 `;
     writeFileSync(GLOBAL_CONFIG_PATH_JSONC, configContent, "utf-8");

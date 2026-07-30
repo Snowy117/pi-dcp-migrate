@@ -1,24 +1,46 @@
 {
-  "name": "pi-dcp",
+  "name": "@snowy117/pi-dcp",
   "version": "0.1.0",
   "description": "Dynamic Context Pruning for the pi coding agent. A port of opencode-dynamic-context-pruning.",
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "keywords": ["pi", "pi-package", "pi-coding-agent", "context", "compression"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Snowy117/pi-dcp-migrate.git"
+  },
+  "homepage": "https://github.com/Snowy117/pi-dcp-migrate#readme",
+  "bugs": {
+    "url": "https://github.com/Snowy117/pi-dcp-migrate/issues"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "*.ts",
+    "dcp.schema.json",
+    "!test-*.ts"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "check:eloc": "npx --yes tsx test-architecture.ts",
     "typecheck": "npx --yes tsc --noEmit",
-    "test": "for f in test-*.ts; do npx --yes tsx \"$f\" || exit 1; done"
+    "test": "for f in test-*.ts; do npx --yes tsx \"$f\" || exit 1; done",
+    "prepublishOnly": "npm run typecheck && npm test && npm run check:eloc"
   },
   "pi": {
     "extensions": ["./index.ts"]
   },
   "peerDependencies": {
+    "@earendil-works/pi-agent-core": "*",
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-ai": "*",
     "typebox": "*"
   },
   "peerDependenciesMeta": {
+    "@earendil-works/pi-agent-core": { "optional": true },
     "@earendil-works/pi-coding-agent": { "optional": true },
     "@earendil-works/pi-ai": { "optional": true },
     "typebox": { "optional": true }
