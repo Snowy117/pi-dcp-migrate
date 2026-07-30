@@ -4,12 +4,11 @@ import {
     expandToolTransactionSelection,
     mergeExpandedRangePlans,
     type RangePlan,
-    runMessageCompress,
-    runRangeCompress,
     type SearchContext,
     type Selection,
-} from "./compress.ts";
-import { assignMessageRefs, type DcpMessage } from "./messages.ts";
+} from "./compression-planner.ts";
+import { runMessageCompress, runRangeCompress } from "./compression-engine.ts";
+import { assignMessageRefs, type DcpMessage } from "./conversation.ts";
 import { getConfig } from "./config.ts";
 import { Logger } from "./logger.ts";
 import { createSessionState, type CompressionBlock } from "./types.ts";

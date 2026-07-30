@@ -5,6 +5,11 @@
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "keywords": ["pi", "pi-package", "pi-coding-agent", "context", "compression"],
+  "scripts": {
+    "check:eloc": "npx --yes tsx test-architecture.ts",
+    "typecheck": "npx --yes tsc --noEmit",
+    "test": "for f in test-*.ts; do npx --yes tsx \"$f\" || exit 1; done"
+  },
   "pi": {
     "extensions": ["./index.ts"]
   },

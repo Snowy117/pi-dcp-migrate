@@ -78,4 +78,38 @@ const pruned = pruneMessages(state, logger, messages);
 if (!block.invalidated || block.active || pruned.length !== messages.length) {
     throw new Error("Split tool transaction was not restored from legacy compression state");
 }
+
+{
+    const replay = createSessionState();
+    const child = {
+        ...block,
+        blockId: 2,
+        active: true,
+        invalidated: false,
+        anchorMessageId: "assistant-entry",
+        compressMessageId: "compression-entry",
+        consumedBlockIds: [],
+    };
+    const parent = {
+        ...block,
+        blockId: 3,
+        runId: 2,
+        active: true,
+        invalidated: false,
+        anchorMessageId: "result-entry",
+        compressMessageId: "compression-entry",
+        consumedBlockIds: [2],
+        createdAt: 2,
+    };
+    replay.prune.messages.blocksById.set(2, child);
+    replay.prune.messages.blocksById.set(3, parent);
+    replay.prune.messages.activeBlockIds.add(2);
+    replay.prune.messages.activeBlockIds.add(3);
+    replay.prune.messages.activeByAnchorMessageId.set("assistant-entry", 2);
+    replay.prune.messages.activeByAnchorMessageId.set("result-entry", 3);
+    syncCompressionBlocks(replay, logger, messages);
+    if (replay.prune.messages.activeByAnchorMessageId.has("assistant-entry")) {
+        throw new Error("Consumed compression block retained a stale anchor mapping after replay");
+    }
+}
 console.log("TOOL TRANSACTION INTEGRITY TEST PASSED");

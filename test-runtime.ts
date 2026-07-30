@@ -148,4 +148,26 @@ console.log("m0001 ->", JSON.stringify(parseBoundaryId("m0001")));
 console.log("b3 ->", JSON.stringify(parseBoundaryId("b3")));
 console.log("xyz ->", JSON.stringify(parseBoundaryId("xyz")));
 
+{
+    const compressedState = createSessionState();
+    const history = [
+        mkAssistant("compressed assistant", "old"),
+        mkTool("current", "aged-error", "bash", { command: "bad" }, "failed", true).assistant,
+        mkTool("current", "aged-error", "bash", { command: "bad" }, "failed", true).result,
+        mkAssistant("recent assistant", "recent"),
+    ].map((message, index) => ({ id: `compressed-${index}`, index, message }));
+    compressedState.prune.messages.byMessageId.set("compressed-0", {
+        tokenCount: 1,
+        allBlockIds: [1],
+        activeBlockIds: [1],
+    });
+    compressedState.currentTurn = countTurns(compressedState, history);
+    buildToolIdList(compressedState, history);
+    buildToolMeta(compressedState, config, history);
+    const meta = compressedState.toolMeta.get("aged-error");
+    if (meta?.turn !== 1 || compressedState.currentTurn !== 2) {
+        throw new Error(`Tool age coordinates diverged after compression: tool=${meta?.turn}, current=${compressedState.currentTurn}`);
+    }
+}
+
 console.log("\nALL TESTS PASSED");
