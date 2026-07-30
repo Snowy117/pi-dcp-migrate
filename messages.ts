@@ -705,6 +705,24 @@ function buildCompressedBlockGuidance(state: SessionState): string {
     ].join("\n");
 }
 
+function assistantHasToolCall(entry: DcpMessage): boolean {
+    return entry.message.role === "assistant" && entry.message.content.some((block) => block.type === "toolCall");
+}
+
+function findLastToolResultForAssistant(messages: DcpMessage[], assistant: DcpMessage): DcpMessage | undefined {
+    if (assistant.message.role !== "assistant") return undefined;
+    const callIds = new Set(
+        assistant.message.content.filter((block) => block.type === "toolCall").map((block) => block.id),
+    );
+    let lastResult: DcpMessage | undefined;
+    for (const candidate of messages) {
+        if (candidate.message.role === "toolResult" && callIds.has(candidate.message.toolCallId)) {
+            lastResult = candidate;
+        }
+    }
+    return lastResult;
+}
+
 function injectIntoMessage(entry: DcpMessage, text: string): void {
     if (!text.trim()) return;
     const message = entry.message;
@@ -726,6 +744,11 @@ function injectIntoMessage(entry: DcpMessage, text: string): void {
         return;
     }
     if (message.role === "assistant" && Array.isArray(message.content)) {
+        // Some OpenAI-compatible serializers split mixed assistant content into
+        // separate messages. Adding metadata text to a tool-call message can
+        // therefore produce `assistant(tool_calls), assistant(text), tool`,
+        // which violates the required tool transaction ordering.
+        if (assistantHasToolCall(entry)) return;
         for (const block of message.content) {
             if (block.type === "text" && typeof block.text === "string") {
                 block.text = `${block.text.replace(/\n*$/, "")}\n\n${text.trim()}`;
@@ -823,9 +846,18 @@ function applyAnchoredNudges(state: SessionState, config: PluginConfig, messages
     const injectSet = (anchors: Set<string>, base: string) => {
         if (!base.trim()) return;
         const text = appendGuidanceToTag(base, compressedGuidance);
+        const targets = new Set<DcpMessage>();
         for (const m of messages) {
-            if (anchors.has(m.id ?? "")) injectIntoMessage(m, text);
+            if (!anchors.has(m.id ?? "")) continue;
+            if (!assistantHasToolCall(m)) {
+                targets.add(m);
+                continue;
+            }
+
+            const lastResult = findLastToolResultForAssistant(messages, m);
+            if (lastResult) targets.add(lastResult);
         }
+        for (const target of targets) injectIntoMessage(target, text);
     };
     injectSet(state.nudges.contextLimitAnchors, prompts.contextLimitNudge);
     injectSet(turnAnchors, prompts.turnNudge);
@@ -836,6 +868,7 @@ export function injectMessageIdTags(state: SessionState, config: PluginConfig, m
     for (const entry of messages) {
         if (isIgnoredUserMessage(entry)) continue;
         if (entry.message.role === "compactionSummary") continue;
+        if (assistantHasToolCall(entry)) continue;
         const ref = entry.id ? state.messageIds.byRawId.get(entry.id) : undefined;
         if (!ref) continue;
         const isBlocked = isProtectedUserMessage(config, entry);
