@@ -1,6 +1,6 @@
 {
   "name": "@snowy117/pi-dcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Dynamic Context Pruning for the pi coding agent. A port of opencode-dynamic-context-pruning.",
   "license": "AGPL-3.0-or-later",
   "type": "module",
