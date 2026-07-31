@@ -94,7 +94,17 @@ export function collectEntryIds(entries: Array<{ id: string; parentId?: string |
 }
 
 export function toDcpMessages(messages: AgentMessage[], entryIds: string[]): DcpMessage[] {
-    return messages.map((message, index) => ({ id: entryIds[index] ?? `ctx-${index}`, index, message }));
+    const visible: DcpMessage[] = [];
+    for (let index = 0; index < messages.length; index++) {
+        const message = messages[index]!;
+        if (isPiInvisibleMessage(message)) continue;
+        visible.push({ id: entryIds[index] ?? `ctx-${index}`, index: visible.length, message });
+    }
+    return visible;
+}
+
+export function isPiInvisibleMessage(message: AgentMessage): boolean {
+    return message.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted");
 }
 
 export function assignMessageRefs(state: SessionState, messages: DcpMessage[]): number {

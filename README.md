@@ -15,6 +15,8 @@ A port of [opencode-dynamic-context-pruning](https://github.com/Opencode-DCP/ope
 
 Your session history on disk is **never modified** — DCP only transforms the message array sent to the LLM.
 
+DCP mirrors pi's context filtering: assistant turns that ended with `stopReason: "error"` or `"aborted"` are excluded from DCP's view (refs, compression, pruning), just as pi-ai's `transformMessages` never replays them to the LLM. Orphaned tool calls inside such interrupted turns therefore cannot block compression.
+
 ## Installation
 
 ### npm (recommended)
