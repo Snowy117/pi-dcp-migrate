@@ -1,10 +1,16 @@
 {
   "name": "@snowy117/pi-dcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Dynamic Context Pruning for the pi coding agent. A port of opencode-dynamic-context-pruning.",
   "license": "AGPL-3.0-or-later",
   "type": "module",
-  "keywords": ["pi", "pi-package", "pi-coding-agent", "context", "compression"],
+  "keywords": [
+    "pi",
+    "pi-package",
+    "pi-coding-agent",
+    "context",
+    "compression"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Snowy117/pi-dcp-migrate.git"
@@ -31,7 +37,9 @@
     "prepublishOnly": "npm run typecheck && npm test && npm run check:eloc"
   },
   "pi": {
-    "extensions": ["./index.ts"]
+    "extensions": [
+      "./index.ts"
+    ]
   },
   "peerDependencies": {
     "@earendil-works/pi-agent-core": "*",
@@ -40,9 +48,17 @@
     "typebox": "*"
   },
   "peerDependenciesMeta": {
-    "@earendil-works/pi-agent-core": { "optional": true },
-    "@earendil-works/pi-coding-agent": { "optional": true },
-    "@earendil-works/pi-ai": { "optional": true },
-    "typebox": { "optional": true }
+    "@earendil-works/pi-agent-core": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
   }
 }
