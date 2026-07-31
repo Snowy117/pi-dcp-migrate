@@ -128,7 +128,9 @@ export function validateCompleteToolTransactions(search: SearchContext, selected
                 continue;
             }
             const results = index.resultsByCallId.get(call.id) ?? [];
-            if (!results.length && assistantSelected) issues.push(`${assistant.ref ?? assistant.id} contains tool call ${call.id}, whose result is not available yet`);
+            if (!results.length && assistantSelected && !resultlessToolCallsWereAbandoned(assistant)) {
+                issues.push(`${assistant.ref ?? assistant.id} contains tool call ${call.id}, whose result is not available yet`);
+            }
             for (const result of results) {
                 if (result.id && assistantSelected !== selected.has(result.id)) {
                     issues.push(`${assistant.ref ?? assistant.id} and ${result.ref ?? result.id} are the two sides of tool call ${call.id}`);
@@ -167,7 +169,12 @@ export function expandToolTransactionSelection(
                     const owners = transactions.assistantsByCallId.get(call.id) ?? [];
                     if (owners.length > 1) throw new Error(`Tool call ${call.id} belongs to multiple assistant messages.`);
                     const results = transactions.resultsByCallId.get(call.id) ?? [];
-                    if (!results.length) throw new Error(`${entry.ref ?? entry.id} contains tool call ${call.id}, whose result is not available yet.`);
+                    if (!results.length) {
+                        if (!resultlessToolCallsWereAbandoned(entry)) {
+                            throw new Error(`${entry.ref ?? entry.id} contains tool call ${call.id}, whose result is not available yet.`);
+                        }
+                        continue;
+                    }
                     for (const result of results) if (!selected.has(result.id)) includeEntryOrBlockAnchor(state, search, result, required);
                 }
             } else if (entry.message.role === "toolResult") {
@@ -202,6 +209,11 @@ function includeEntryOrBlockAnchor(state: SessionState, search: SearchContext, e
 function boundaryForMessage(entry: DcpMessage): BoundaryRef {
     if (!entry.id) throw new Error("Failed to map tool transaction back to a session message");
     return { kind: "message", rawIndex: entry.index, entryId: entry.id };
+}
+
+function resultlessToolCallsWereAbandoned(entry: DcpMessage): boolean {
+    return entry.message.role === "assistant" &&
+        (entry.message.stopReason === "error" || entry.message.stopReason === "aborted");
 }
 
 export function resolveAnchorMessageId(ref: BoundaryRef): string {

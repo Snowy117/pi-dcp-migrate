@@ -33,6 +33,21 @@ function assistant(callIds: string[]): AgentMessage {
     };
 }
 
+function failedAssistant(callIds: string[]): AgentMessage {
+    return {
+        ...assistant(callIds),
+        stopReason: "error",
+        errorMessage: "unexpected EOF",
+    } as AgentMessage;
+}
+
+function stoppedAssistant(callIds: string[], stopReason: "stop" | "length" | "aborted"): AgentMessage {
+    return {
+        ...assistant(callIds),
+        stopReason,
+    } as AgentMessage;
+}
+
 function result(callId: string): AgentMessage {
     return {
         role: "toolResult",
@@ -111,6 +126,65 @@ function makeCompressContext(mode: "range" | "message", messages: DcpMessage[]) 
 
 {
     const messages = makeMessages([
+        assistant(["completed-before-error", "abandoned-after-error"]),
+        result("completed-before-error"),
+        text("continued after partial execution"),
+    ]);
+    const failed = messages[0]!.message;
+    if (failed.role === "assistant") {
+        failed.stopReason = "error";
+        failed.errorMessage = "stream interrupted";
+    }
+    const state = createSessionState();
+    const expanded = expandToolTransactionSelection(state, makeSearch(messages), boundary(messages, 0), boundary(messages, 0));
+    assert(expanded.end.rawIndex === 1, "Completed calls from a failed response must retain their tool result");
+}
+
+{
+    const messages = makeMessages([
+        stoppedAssistant(["aborted-call"], "aborted"),
+        text("continued after abort"),
+    ]);
+    const { ctx } = makeCompressContext("range", messages);
+    const output = runRangeCompress(ctx, {
+        topic: "aborted response recovery",
+        content: [{
+            startId: "m0001",
+            endId: "m0002",
+            summary: "The aborted response was abandoned and the conversation continued.",
+        }],
+    }, messages, "compress-after-abort", () => {});
+    assert(output.includes("Compressed 2 messages"), "Aborted tool calls must not permanently block compression");
+}
+
+{
+    const messages = makeMessages([
+        stoppedAssistant(["completed-before-abort", "abandoned-after-abort"], "aborted"),
+        result("completed-before-abort"),
+        text("continued after partial abort"),
+    ]);
+    const state = createSessionState();
+    const expanded = expandToolTransactionSelection(state, makeSearch(messages), boundary(messages, 0), boundary(messages, 0));
+    assert(expanded.end.rawIndex === 1, "Completed calls from an aborted response must retain their tool result");
+}
+
+for (const [stopReason, callId] of [["stop", "stopped-call"], ["length", "length-limited-call"]] as const) {
+    const messages = makeMessages([stoppedAssistant([callId], stopReason)]);
+    const state = createSessionState();
+    let error = "";
+    try {
+        expandToolTransactionSelection(state, makeSearch(messages), boundary(messages, 0), boundary(messages, 0));
+    } catch (caught) {
+        error = caught instanceof Error ? caught.message : String(caught);
+    }
+    assert(
+        error.includes("result is not available yet"),
+        `${stopReason} responses with resultless tool calls must remain protected as incomplete transactions`,
+    );
+}
+
+{
+    const messages = makeMessages([
         assistant(["outer"]),
         text("between"),
         assistant(["inner"]),
@@ -162,6 +236,29 @@ function makeCompressContext(mode: "range" | "message", messages: DcpMessage[]) 
         error = caught instanceof Error ? caught.message : String(caught);
     }
     assert(error.includes("result is not available yet"), "A selected pending tool call must still fail clearly");
+}
+
+{
+    const messages = makeMessages([
+        text("before failed response"),
+        failedAssistant(["abandoned-a", "abandoned-b"]),
+        text("continued after retry"),
+    ]);
+    const { state, ctx } = makeCompressContext("range", messages);
+    const output = runRangeCompress(ctx, {
+        topic: "failed response recovery",
+        content: [{
+            startId: "m0001",
+            endId: "m0003",
+            summary: "The failed assistant response was abandoned and the conversation continued.",
+        }],
+    }, messages, "compress-after-failed-response", () => {});
+    const block = state.prune.messages.blocksById.get(1);
+    assert(output.includes("Compressed 3 messages"), "Failed assistant responses must not permanently block later compression");
+    assert(
+        block?.effectiveMessageIds.join(",") === "entry-0,entry-1,entry-2",
+        "Compression must retain the failed assistant response while ignoring its abandoned tool call",
+    );
 }
 
 {
