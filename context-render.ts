@@ -25,6 +25,7 @@ export function pruneMessages(state: SessionState, logger: Logger, messages: Dcp
 
 function applyToolPruning(state: SessionState, messages: DcpMessage[]): void {
     for (const entry of messages) {
+        if (!entry.id) continue;
         if (isMessageCompacted(state, entry)) continue;
         const message = entry.message;
         if (message.role === "assistant") {

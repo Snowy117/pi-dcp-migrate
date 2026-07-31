@@ -65,8 +65,24 @@ export function resolveBoundary(search: SearchContext, state: SessionState, id: 
     }
     const block = search.summaryByBlockId.get(parsed.blockId);
     const anchor = block ? search.byEntryId.get(block.anchorMessageId) : undefined;
-    if (!block || !anchor) throw new Error(`Compressed block ${parsed.ref} is not available in the current context.`);
+    if (!block || !anchor) throw new Error(unavailableBlockMessage(search, state, parsed.ref, parsed.blockId));
     return { kind: "compressed-block", rawIndex: anchor.index, blockId: block.blockId, anchorMessageId: block.anchorMessageId };
+}
+
+function unavailableBlockMessage(
+    search: SearchContext,
+    state: SessionState,
+    ref: string,
+    blockId: number,
+): string {
+    const stored = state.prune.messages.blocksById.get(blockId);
+    const successor = stored?.deactivatedByBlockId;
+    const active = [...search.summaryByBlockId.keys()].sort((left, right) => left - right);
+    const details = successor && search.summaryByBlockId.has(successor)
+        ? ` It was consumed by active block b${successor}; retry with b${successor}.`
+        : "";
+    return `Compressed block ${ref} is not available in the current context.${details} ` +
+        `Active compressed blocks: ${active.length ? active.map((id) => `b${id}`).join(", ") : "none"}.`;
 }
 
 export function resolveSelection(search: SearchContext, start: BoundaryRef, end: BoundaryRef): Selection {

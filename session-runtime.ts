@@ -3,8 +3,9 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { PluginConfig } from "./config.ts";
 import {
     assignMessageRefs,
-    collectConversationEntryIds,
+    collectEntryIds,
     findLastCompactionTimestamp,
+    projectConversationMessages,
     toDcpMessages,
     type DcpMessage,
 } from "./conversation.ts";
@@ -39,15 +40,27 @@ export function reconcileConversation(
     purgeErrors(state, config, messages);
 }
 
-export function conversationFromContext(messages: AgentMessage[], ctx: ExtensionContext): DcpMessage[] {
-    return toDcpMessages(messages, collectConversationEntryIds(ctx));
+export async function conversationFromContext(
+    messages: AgentMessage[],
+    ctx: ExtensionContext,
+    canonical?: DcpMessage[],
+): Promise<DcpMessage[]> {
+    return projectConversationMessages(
+        messages,
+        canonical ?? await buildCanonicalConversation(ctx),
+    );
 }
 
 export async function buildConversationForTool(ctx: ExtensionContext): Promise<DcpMessage[]> {
+    return buildCanonicalConversation(ctx);
+}
+
+export async function buildCanonicalConversation(ctx: ExtensionContext): Promise<DcpMessage[]> {
     const { buildSessionContext } = await import("@earendil-works/pi-coding-agent");
     const entries = ctx.sessionManager.getBranch();
-    const built = buildSessionContext(entries, ctx.sessionManager.getLeafId());
-    return toDcpMessages(built.messages, collectConversationEntryIds(ctx));
+    const leafId = ctx.sessionManager.getLeafId();
+    const built = buildSessionContext(entries, leafId);
+    return toDcpMessages(built.messages, collectEntryIds(entries, leafId));
 }
 
 export async function loadStateForSession(state: SessionState, ctx: ExtensionContext, logger: Logger): Promise<void> {

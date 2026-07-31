@@ -16,6 +16,7 @@ import { Logger } from "./logger.ts";
 import { saveSessionState } from "./persistence.ts";
 import { buildProtectedToolsExtension, PromptStore, renderSystemPrompt } from "./prompts.ts";
 import {
+    buildCanonicalConversation,
     conversationFromContext,
     loadStateForSession,
     reconcileConversation,
@@ -81,17 +82,21 @@ export class DcpController {
         this.pi.sendUserMessage(body);
     }
 
-    private processContext(rawMessages: AgentMessage[], ctx: ExtensionContext): { messages: AgentMessage[] } | void {
+    private async processContext(
+        rawMessages: AgentMessage[],
+        ctx: ExtensionContext,
+    ): Promise<{ messages: AgentMessage[] } | void> {
         if (!rawMessages.length) return;
         const { state, config, logger } = this.runtime;
-        const messages = conversationFromContext(rawMessages, ctx);
+        const canonical = await buildCanonicalConversation(ctx);
+        const messages = await conversationFromContext(rawMessages, ctx, canonical);
         const key = sessionKeyFor(ctx);
         if (state.sessionKey !== key) {
             resetSessionState(state);
             state.sessionKey = key;
             state.manualMode = config.manualMode.enabled ? "active" : false;
         }
-        reconcileConversation(state, config, logger, messages);
+        reconcileConversation(state, config, logger, canonical);
         const rendered = pruneMessages(state, logger, messages);
         if (this.permission() !== "deny" && !state.manualMode) {
             injectCompressNudges(state, config, logger, rendered, this.runtime.prompts.getRuntimePrompts());

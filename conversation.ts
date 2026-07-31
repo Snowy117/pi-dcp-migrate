@@ -94,13 +94,68 @@ export function collectEntryIds(entries: Array<{ id: string; parentId?: string |
 }
 
 export function toDcpMessages(messages: AgentMessage[], entryIds: string[]): DcpMessage[] {
+    if (messages.length !== entryIds.length) {
+        throw new Error(
+            `Canonical conversation mismatch: ${messages.length} messages, ${entryIds.length} entry IDs`,
+        );
+    }
     const visible: DcpMessage[] = [];
     for (let index = 0; index < messages.length; index++) {
         const message = messages[index]!;
         if (isPiInvisibleMessage(message)) continue;
-        visible.push({ id: entryIds[index] ?? `ctx-${index}`, index: visible.length, message });
+        visible.push({ id: entryIds[index]!, index: visible.length, message });
     }
     return visible;
+}
+
+export function projectConversationMessages(
+    messages: AgentMessage[],
+    canonical: DcpMessage[],
+): DcpMessage[] {
+    const projected: DcpMessage[] = [];
+    let cursor = 0;
+    for (const message of messages) {
+        const exactIndex = canonical.findIndex(
+            (entry, index) => index >= cursor && entry.message === message,
+        );
+        const fingerprint = exactIndex < 0 ? messageFingerprint(message) : "";
+        const candidates = exactIndex >= 0
+            ? [exactIndex]
+            : canonical.flatMap((entry, index) =>
+                index >= cursor && messageFingerprint(entry.message) === fingerprint ? [index] : []
+            );
+        const matchIndex = candidates.length === 1 ? candidates[0]! : -1;
+        const id = matchIndex >= 0 ? canonical[matchIndex]!.id : "";
+        if (matchIndex >= 0) cursor = matchIndex + 1;
+        projected.push({ id, index: projected.length, message });
+    }
+    return projected;
+}
+
+function messageFingerprint(message: AgentMessage): string {
+    if (message.role === "toolResult") return `toolResult:${message.toolCallId}`;
+    if (message.role === "assistant") {
+        const responseId = "responseId" in message && typeof message.responseId === "string"
+            ? message.responseId
+            : "";
+        if (responseId) return `assistant-response:${responseId}`;
+        const toolCallIds = message.content
+            .filter((block) => block.type === "toolCall")
+            .map((block) => block.id);
+        if (toolCallIds.length) return `assistant-tools:${toolCallIds.join("\u0000")}`;
+    }
+    return stableStringify(message);
+}
+
+function stableStringify(value: unknown): string {
+    if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+    if (value && typeof value === "object") {
+        return `{${Object.entries(value)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([key, child]) => `${JSON.stringify(key)}:${stableStringify(child)}`)
+            .join(",")}}`;
+    }
+    return JSON.stringify(value) ?? String(value);
 }
 
 export function isPiInvisibleMessage(message: AgentMessage): boolean {
