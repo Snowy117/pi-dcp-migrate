@@ -144,7 +144,7 @@ export function validateCompleteToolTransactions(search: SearchContext, selected
                 continue;
             }
             const results = index.resultsByCallId.get(call.id) ?? [];
-            if (!results.length && assistantSelected && !resultlessToolCallsWereAbandoned(assistant)) {
+            if (!results.length && assistantSelected && !resultlessToolCallsWereAbandoned(assistant, search.messages)) {
                 issues.push(`${assistant.ref ?? assistant.id} contains tool call ${call.id}, whose result is not available yet`);
             }
             for (const result of results) {
@@ -186,7 +186,7 @@ export function expandToolTransactionSelection(
                     if (owners.length > 1) throw new Error(`Tool call ${call.id} belongs to multiple assistant messages.`);
                     const results = transactions.resultsByCallId.get(call.id) ?? [];
                     if (!results.length) {
-                        if (!resultlessToolCallsWereAbandoned(entry)) {
+                        if (!resultlessToolCallsWereAbandoned(entry, search.messages)) {
                             throw new Error(`${entry.ref ?? entry.id} contains tool call ${call.id}, whose result is not available yet.`);
                         }
                         continue;
@@ -227,9 +227,16 @@ function boundaryForMessage(entry: DcpMessage): BoundaryRef {
     return { kind: "message", rawIndex: entry.index, entryId: entry.id };
 }
 
-function resultlessToolCallsWereAbandoned(entry: DcpMessage): boolean {
-    return entry.message.role === "assistant" &&
-        (entry.message.stopReason === "error" || entry.message.stopReason === "aborted");
+function resultlessToolCallsWereAbandoned(entry: DcpMessage, messages: DcpMessage[]): boolean {
+    if (entry.message.role !== "assistant") return false;
+    if (entry.message.stopReason === "error" || entry.message.stopReason === "aborted") return true;
+    // Align with pi's transformMessages (pi-ai/dist/api/transform-messages.js): before sending
+    // to the LLM, pi synthesizes an empty tool result ("No result provided", isError: true) for
+    // any tool call that has no matching result in the conversation - e.g. when the user replied
+    // and branched before the tool result was delivered, so the result lives on another branch
+    // and is absent from the canonical (leaf-path) conversation. Only a tool call on the very
+    // last assistant message is a genuinely pending transaction that pi has not yet resolved.
+    return messages.length > 0 && messages[messages.length - 1] !== entry;
 }
 
 export function resolveAnchorMessageId(ref: BoundaryRef): string {
